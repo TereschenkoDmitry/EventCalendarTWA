@@ -1,0 +1,5 @@
+{
+  "name": "EventCalendar TWA",
+  "description": "Telegram Web App calendar synced with Google Calendar and local export functionality.",
+  "requestFramePermissions": []
+}
