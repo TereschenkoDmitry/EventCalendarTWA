@@ -5,13 +5,21 @@ import EventItem from './components/EventItem';
 import { Event } from './types';
 
 /**
- * Ключи теперь берутся из переменных окружения.
- * На Vercel их нужно добавить в настройках проекта (Environment Variables):
- * API_KEY - ваш ключ Google API
- * CALENDAR_ID - ID вашего Google календаря
+ * Безопасное получение переменных окружения.
+ * В современных сборщиках (Vite) используется import.meta.env.
+ * На Vercel переменные должны называться VITE_API_KEY и VITE_CALENDAR_ID.
  */
-const TARGET_CALENDAR_ID = process.env.CALENDAR_ID || '';
-const API_KEY = process.env.API_KEY || '';
+const getEnv = (key: string): string => {
+  // @ts-ignore
+  const viteEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env[`VITE_${key}`] : undefined;
+  // @ts-ignore
+  const processEnv = typeof process !== 'undefined' && process.env ? process.env[key] || process.env[`VITE_${key}`] : undefined;
+  
+  return viteEnv || processEnv || '';
+};
+
+const TARGET_CALENDAR_ID = getEnv('CALENDAR_ID');
+const API_KEY = getEnv('API_KEY');
 
 declare global {
   interface Window {
@@ -38,7 +46,7 @@ const App: React.FC = () => {
     if (!API_KEY || !TARGET_CALENDAR_ID) {
       setError({ 
         message: "Конфигурация отсутствует", 
-        details: "Не установлены переменные окружения API_KEY или CALENDAR_ID. Настройте их в панели управления Vercel." 
+        details: "Переменные VITE_API_KEY или VITE_CALENDAR_ID не найдены. Убедитесь, что они добавлены в Environment Variables на Vercel и деплой был перезапущен." 
       });
       return;
     }
@@ -55,8 +63,8 @@ const App: React.FC = () => {
 
       if (!response.ok) {
         setError({ 
-          message: "Ошибка доступа", 
-          details: data.error?.message || "Проверьте ID календаря и API ключ." 
+          message: "Ошибка Google API", 
+          details: data.error?.message || "Проверьте права доступа к календарю." 
         });
         return;
       }
@@ -67,28 +75,17 @@ const App: React.FC = () => {
           const cleanDesc = rawDesc.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
           const lines = cleanDesc.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
 
-          const headerMarkers = [
-            '1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.',
-            'Город', 'Округ', 'Наименование', 'Описание', 'Площадка', 'Допуск', 'Стоимость', 'Сайт', 'Связь', 'Контакты'
-          ];
-
-          const isHeader = (text: string) => {
-            return headerMarkers.some(m => text.toLowerCase().startsWith(m.toLowerCase()));
-          };
+          const headerMarkers = ['1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.'];
+          const isHeader = (text: string) => headerMarkers.some(m => text.startsWith(m));
 
           const getValueAfter = (patterns: string[], fallback: string) => {
             for (let i = 0; i < lines.length; i++) {
               const line = lines[i];
-              const lowerLine = line.toLowerCase();
-              const matchedPattern = patterns.find(p => lowerLine.startsWith(p.toLowerCase()));
-              
+              const matchedPattern = patterns.find(p => line.toLowerCase().startsWith(p.toLowerCase()));
               if (matchedPattern) {
                 let after = line.substring(matchedPattern.length).replace(/^[:.\s-]+/, '').trim();
                 if (after.length > 0 && !isHeader(after)) return after;
-                if (lines[i + 1]) {
-                  const nextLine = lines[i + 1];
-                  if (!isHeader(nextLine)) return nextLine;
-                }
+                if (lines[i + 1] && !isHeader(lines[i + 1])) return lines[i + 1];
               }
             }
             return fallback;
@@ -99,7 +96,7 @@ const App: React.FC = () => {
           let city = 'Не указан';
           let district = '';
           
-          if (cityDistrictRaw && !isHeader(cityDistrictRaw)) {
+          if (cityDistrictRaw) {
             const parts = cityDistrictRaw.split(',').map(p => p.trim());
             if (parts.length >= 2) {
               district = parts[0]; 
@@ -111,23 +108,23 @@ const App: React.FC = () => {
 
           return {
             id: gEvent.id,
-            city: city,
-            district: district,
-            name: getValueAfter(['3. НАИМЕНОВАНИЕ', '3.НАИМЕНОВАНИЕ'], gEvent.summary || 'БЕЗ НАЗВАНИЯ').toUpperCase(),
-            shortDescription: getValueAfter(['4. Описание', '4.Описание'], ''),
+            city,
+            district,
+            name: getValueAfter(['3. НАИМЕНОВАНИЕ'], gEvent.summary || 'БЕЗ НАЗВАНИЯ').toUpperCase(),
+            shortDescription: getValueAfter(['4. Описание'], ''),
             date: start,
-            venue: getValueAfter(['6. Площадка', '6.Площадка'], gEvent.location || 'Не указана'),
-            ageLimit: getValueAfter(['7. Допуск', '7.Допуск'], '0+'),
-            price: getValueAfter(['8. Стоимость', '8.Стоимость', '8. Цена'], 'Бесплатно'),
+            venue: getValueAfter(['6. Площадка'], gEvent.location || 'Не указана'),
+            ageLimit: getValueAfter(['7. Допуск'], '0+'),
+            price: getValueAfter(['8. Стоимость', '8. Цена'], 'Бесплатно'),
             longDescription: cleanDesc,
-            link: getValueAfter(['9. Сайт', '9.Сайт'], ''),
-            contacts: getValueAfter(['10. Обратная связь', '10.Обратная'], ''),
+            link: getValueAfter(['9. Сайт'], ''),
+            contacts: getValueAfter(['10. Обратная связь'], ''),
           } as Event;
         });
         setEvents(mapped);
       }
     } catch (err) {
-      setError({ message: "Ошибка сети", details: "Проверьте подключение к интернету." });
+      setError({ message: "Ошибка сети", details: "Не удалось загрузить данные из Google Календаря." });
     } finally {
       setIsLoading(false);
     }
@@ -172,21 +169,20 @@ const App: React.FC = () => {
           </h3>
           {isLoading && (
             <div className="flex items-center space-x-2">
-              <span className="text-[10px] font-bold text-blue-400 uppercase animate-pulse">Обновление</span>
               <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
             </div>
           )}
         </div>
 
         {error ? (
-          <div className="mx-6 p-8 bg-rose-50 rounded-3xl text-center border-2 border-rose-100 border-dashed">
-            <p className="text-rose-600 font-black uppercase text-sm mb-2">{error.message}</p>
-            <p className="text-xs text-rose-400 font-medium mb-6">{error.details}</p>
+          <div className="mx-6 p-8 bg-white rounded-3xl text-center shadow-sm border border-slate-100">
+            <p className="text-rose-500 font-black uppercase text-sm mb-2">{error.message}</p>
+            <p className="text-[11px] text-slate-400 font-medium mb-6 leading-relaxed">{error.details}</p>
             <button 
-              onClick={() => fetchEvents(currentDate.getFullYear())} 
-              className="px-6 py-2 bg-rose-600 text-white rounded-xl text-xs font-black uppercase shadow-lg shadow-rose-200"
+              onClick={() => window.location.reload()} 
+              className="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-wider"
             >
-              Обновить
+              Перезагрузить
             </button>
           </div>
         ) : (
@@ -200,11 +196,8 @@ const App: React.FC = () => {
                 />
               ))
             ) : (
-              <div className="py-20 flex flex-col items-center justify-center opacity-30">
-                <svg className="w-16 h-16 text-slate-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                </svg>
-                <p className="text-sm font-black uppercase tracking-widest text-slate-400">Событий нет</p>
+              <div className="py-20 flex flex-col items-center justify-center opacity-20">
+                <p className="text-sm font-black uppercase tracking-widest text-slate-400">Пусто</p>
               </div>
             )}
           </div>
