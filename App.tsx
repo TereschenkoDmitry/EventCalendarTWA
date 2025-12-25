@@ -5,21 +5,43 @@ import EventItem from './components/EventItem';
 import { Event } from './types';
 
 /**
- * Безопасное получение переменных окружения.
- * В современных сборщиках (Vite) используется import.meta.env.
- * На Vercel переменные должны называться VITE_API_KEY и VITE_CALENDAR_ID.
+ * Максимально надежное получение переменных окружения для Vercel/Vite.
  */
 const getEnv = (key: string): string => {
-  // @ts-ignore
-  const viteEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env[`VITE_${key}`] : undefined;
-  // @ts-ignore
-  const processEnv = typeof process !== 'undefined' && process.env ? process.env[key] || process.env[`VITE_${key}`] : undefined;
+  let value = '';
   
-  return viteEnv || processEnv || '';
+  try {
+    // Для Vite (стандарт на Vercel для большинства React шаблонов)
+    // Cast to any to avoid "Property 'env' does not exist on type 'ImportMeta'" error
+    if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
+      value = (import.meta as any).env[`VITE_${key}`] || '';
+    }
+  } catch (e) {}
+  
+  if (!value) {
+    try {
+      // Для сред, использующих process.env
+      // @ts-ignore
+      if (typeof process !== 'undefined' && process.env) {
+        value = process.env[`VITE_${key}`] || process.env[key] || '';
+      }
+    } catch (e) {}
+  }
+  
+  return value;
 };
 
 const TARGET_CALENDAR_ID = getEnv('CALENDAR_ID');
-const API_KEY = getEnv('API_KEY');
+// Guideline: The API key must be obtained exclusively from the environment variable process.env.API_KEY.
+// @ts-ignore
+const API_KEY = (typeof process !== 'undefined' && process.env.API_KEY) ? process.env.API_KEY : '';
+
+// Отладка в консоль (на Vercel нажмите F12 чтобы увидеть)
+console.log('App Configuration Status:', {
+  hasCalendarId: !!TARGET_CALENDAR_ID,
+  hasApiKey: !!API_KEY,
+  calendarIdLength: TARGET_CALENDAR_ID ? TARGET_CALENDAR_ID.length : 0
+});
 
 declare global {
   interface Window {
@@ -43,10 +65,15 @@ const App: React.FC = () => {
   }, []);
 
   const fetchEvents = async (yearToFetch: number) => {
+    // Guideline: Do not request user to update API_KEY in the UI or ask for it.
     if (!API_KEY || !TARGET_CALENDAR_ID) {
       setError({ 
-        message: "Конфигурация отсутствует", 
-        details: "Переменные VITE_API_KEY или VITE_CALENDAR_ID не найдены. Убедитесь, что они добавлены в Environment Variables на Vercel и деплой был перезапущен." 
+        message: "Конфигурация не найдена", 
+        details: (
+          <div className="text-left mt-2 space-y-2">
+            <p>Необходимые параметры (API_KEY, CALENDAR_ID) не настроены в окружении.</p>
+          </div>
+        )
       });
       return;
     }
@@ -64,7 +91,7 @@ const App: React.FC = () => {
       if (!response.ok) {
         setError({ 
           message: "Ошибка Google API", 
-          details: data.error?.message || "Проверьте права доступа к календарю." 
+          details: data.error?.message || "Возможно, календарь не является публичным или API ключ недействителен." 
         });
         return;
       }
@@ -124,7 +151,10 @@ const App: React.FC = () => {
         setEvents(mapped);
       }
     } catch (err) {
-      setError({ message: "Ошибка сети", details: "Не удалось загрузить данные из Google Календаря." });
+      setError({ 
+        message: "Ошибка сети", 
+        details: "Не удалось подключиться к серверам Google. Проверьте соединение." 
+      });
     } finally {
       setIsLoading(false);
     }
@@ -175,14 +205,16 @@ const App: React.FC = () => {
         </div>
 
         {error ? (
-          <div className="mx-6 p-8 bg-white rounded-3xl text-center shadow-sm border border-slate-100">
+          <div className="mx-6 p-8 bg-white rounded-3xl shadow-sm border border-slate-100 animate-fade-in">
             <p className="text-rose-500 font-black uppercase text-sm mb-2">{error.message}</p>
-            <p className="text-[11px] text-slate-400 font-medium mb-6 leading-relaxed">{error.details}</p>
+            <div className="text-[11px] text-slate-600 font-medium mb-6 leading-relaxed">
+              {error.details}
+            </div>
             <button 
               onClick={() => window.location.reload()} 
-              className="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-wider"
+              className="w-full px-6 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-wider active:scale-95 transition-transform"
             >
-              Перезагрузить
+              Обновить страницу
             </button>
           </div>
         ) : (
@@ -197,7 +229,10 @@ const App: React.FC = () => {
               ))
             ) : (
               <div className="py-20 flex flex-col items-center justify-center opacity-20">
-                <p className="text-sm font-black uppercase tracking-widest text-slate-400">Пусто</p>
+                <svg className="w-12 h-12 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-400">Событий нет</p>
               </div>
             )}
           </div>
